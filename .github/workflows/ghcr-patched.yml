@@ -30,19 +30,32 @@ jobs:
   test:
     name: Unit test patched plugins
     runs-on: ubuntu-latest
-    container: mericodev/lake-builder:latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set git config
-        run: git config --global --add safe.directory "$(pwd)"
+      - uses: docker/setup-buildx-action@v3
+      # Reuse the Dockerfile builder stage (Go toolchain + libgit2 v1.3.0) as the test environment.
+      - name: Build builder stage
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          target: builder
+          load: true
+          tags: devlake-builder:local
+          cache-from: type=gha,scope=builder
+          cache-to: type=gha,scope=builder,mode=max
       - name: Test
-        working-directory: backend
         run: |
-          go install github.com/vektra/mockery/v2@v2.53.6
-          export PATH="$(go env GOPATH)/bin:$PATH"
-          make mock
-          go build ./plugins/refdiff/... ./plugins/gitextractor/...
-          go test ./plugins/gitextractor/... ./plugins/refdiff/tasks/...
+          docker run --rm -v "$PWD/backend:/app" -w /app \
+            -e CGO_ENABLED=1 \
+            -e CC=x86_64-linux-gnu-gcc \
+            -e PKG_CONFIG_PATH=/usr/local/deps/x86_64/lib/pkgconfig \
+            -e LD_LIBRARY_PATH=/usr/local/deps/x86_64/lib \
+            devlake-builder:local sh -ec '
+              git config --global --add safe.directory /app
+              make mock
+              go build ./plugins/refdiff/... ./plugins/gitextractor/...
+              go test ./plugins/gitextractor/... ./plugins/refdiff/tasks/...
+            '
 
   build-and-push:
     needs: test

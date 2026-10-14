@@ -15,7 +15,7 @@
 # limitations under the License.
 #
 
-# Fork-only workflow: build the patched devlake backend image and push it to GHCR.
+# Fork-only workflow: build the patched devlake backend and config-ui images and push them to GHCR.
 name: Build-Patched-Image-Push-GHCR
 on:
   push:
@@ -53,8 +53,8 @@ jobs:
             devlake-builder:local sh -ec '
               git config --global --add safe.directory /app
               make mock
-              go build ./plugins/refdiff/... ./plugins/gitextractor/...
-              go test ./plugins/gitextractor/... ./plugins/refdiff/tasks/...
+              go build ./plugins/refdiff/... ./plugins/gitextractor/... ./plugins/dora/...
+              go test ./plugins/gitextractor/... ./plugins/refdiff/tasks/... ./plugins/dora/tasks/... ./plugins/dora/impl/...
             '
 
   build-and-push:
@@ -101,3 +101,38 @@ jobs:
           build-args: |
             TAG=${{ env.IMAGE_TAG }}
             SHA=${{ steps.meta.outputs.short_sha }}
+
+  build-and-push-config-ui:
+    needs: test
+    name: Build and push devlake config-ui image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get metadata
+        id: meta
+        run: |
+          echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}-config-ui" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./config-ui
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ env.IMAGE_TAG }}
+            ${{ steps.meta.outputs.image }}:${{ env.IMAGE_TAG }}-${{ steps.meta.outputs.short_sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=config-ui
+          cache-to: type=gha,scope=config-ui,mode=max
